@@ -1,4 +1,5 @@
 const maxTextLength = 3500;
+const uzbekistanTimeZone = 'Asia/Tashkent';
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -16,6 +17,39 @@ function getIp(req) {
   return req.headers['x-real-ip'] || req.socket?.remoteAddress || 'unknown';
 }
 
+async function getIpLocation(ip) {
+  if (!ip || ip === 'unknown' || ip === '::1' || ip === '127.0.0.1') {
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 1800);
+
+  try {
+    const response = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`, {
+      signal: controller.signal,
+    });
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    if (!data.success) return null;
+
+    return {
+      country: data.country,
+      region: data.region,
+      city: data.city,
+      isp: data.connection?.isp,
+      org: data.connection?.org,
+      asn: data.connection?.asn,
+    };
+  } catch (error) {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 function eventTitle(event) {
   const titles = {
     site_open: 'Сайт открыт',
@@ -27,12 +61,36 @@ function eventTitle(event) {
   return titles[event] || event;
 }
 
-function buildMessage(payload, req) {
+function formatUzbekistanTime(value) {
+  const date = value ? new Date(value) : new Date();
+  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
+
+  return new Intl.DateTimeFormat('ru-RU', {
+    dateStyle: 'medium',
+    timeStyle: 'medium',
+    timeZone: uzbekistanTimeZone,
+  }).format(safeDate);
+}
+
+function formatLocation(location) {
+  if (!location) return 'Не удалось определить';
+
+  const place = [location.city, location.region, location.country].filter(Boolean).join(', ');
+  const network = [location.isp || location.org, location.asn ? `AS${location.asn}` : ''].filter(Boolean).join(' / ');
+
+  if (place && network) return `${place} (${network})`;
+  return place || network || 'Не удалось определить';
+}
+
+async function buildMessage(payload, req) {
   const { event, details = {}, client = {}, sentAt } = payload;
+  const ip = getIp(req);
+  const location = await getIpLocation(ip);
   const rows = [
     `<b>${escapeHtml(eventTitle(event))}</b>`,
     '',
-    `<b>Время:</b> ${escapeHtml(sentAt || new Date().toISOString())}`,
+    `<b>Время UZ:</b> ${escapeHtml(formatUzbekistanTime(sentAt))}`,
+    `<b>Время ISO:</b> ${escapeHtml(sentAt || new Date().toISOString())}`,
     `<b>URL:</b> ${escapeHtml(client.url)}`,
     `<b>Страница книги:</b> ${escapeHtml(details.page || '-')}`,
     `<b>Действие:</b> ${escapeHtml(details.action || event)}`,
@@ -42,9 +100,10 @@ function buildMessage(payload, req) {
     `<b>Экран:</b> ${escapeHtml(client.screen || '-')}`,
     `<b>Окно:</b> ${escapeHtml(client.viewport || '-')}`,
     `<b>Язык:</b> ${escapeHtml(client.language || '-')}`,
-    `<b>Таймзона:</b> ${escapeHtml(client.timezone || '-')}`,
+    `<b>Таймзона клиента:</b> ${escapeHtml(client.timezone || '-')}`,
     `<b>Платформа:</b> ${escapeHtml(client.platform || '-')}`,
-    `<b>IP:</b> ${escapeHtml(getIp(req))}`,
+    `<b>IP:</b> ${escapeHtml(ip)}`,
+    `<b>Локация по IP:</b> ${escapeHtml(formatLocation(location))}`,
     `<b>Referrer:</b> ${escapeHtml(client.referrer || 'direct')}`,
     '',
     `<b>User-Agent:</b> ${escapeHtml(client.userAgent || '-')}`,
@@ -68,7 +127,7 @@ export default async function handler(req, res) {
 
   try {
     const payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-    const text = buildMessage(payload || {}, req);
+    const text = await buildMessage(payload || {}, req);
 
     const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
