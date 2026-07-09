@@ -1,7 +1,8 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FiChevronLeft, FiChevronRight } from 'react-icons/fi';
 import { bookStories } from '../data/bookText.js';
+import { trackTelegramEvent } from '../utils/tracking.js';
 
 const linesPerPage = 6;
 const shortLineLimit = 42;
@@ -110,6 +111,8 @@ function PageContent({ page }) {
 
 export default function InteractiveBook() {
   const pages = useMemo(() => buildPages(), []);
+  const hasTrackedSiteOpen = useRef(false);
+  const openingTimerRef = useRef(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isOpening, setIsOpening] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
@@ -117,18 +120,42 @@ export default function InteractiveBook() {
   const canGoBack = pageIndex > 0;
   const canGoNext = pageIndex < pages.length - 1;
 
+  useEffect(() => {
+    if (hasTrackedSiteOpen.current) return undefined;
+
+    hasTrackedSiteOpen.current = true;
+    trackTelegramEvent('site_open', {
+      page: `1 / ${pages.length}`,
+    });
+
+    return () => {
+      window.clearTimeout(openingTimerRef.current);
+    };
+  }, [pages.length]);
+
   const openBook = () => {
     setIsOpening(true);
-    window.setTimeout(() => {
+    trackTelegramEvent('book_open', {
+      page: `${pageIndex + 1} / ${pages.length}`,
+    });
+    openingTimerRef.current = window.setTimeout(() => {
       setIsOpen(true);
       setIsOpening(false);
     }, 900);
   };
 
-  const goToPage = (nextIndex) => {
+  const goToPage = (nextIndex, source = 'page') => {
     if (nextIndex < 0 || nextIndex >= pages.length || nextIndex === pageIndex) return;
-    setDirection(nextIndex > pageIndex ? 1 : -1);
+    const isNext = nextIndex > pageIndex;
+    setDirection(isNext ? 1 : -1);
     setPageIndex(nextIndex);
+    trackTelegramEvent(isNext ? 'page_next' : 'page_previous', {
+      action: isNext ? 'next' : 'previous',
+      source,
+      page: `${nextIndex + 1} / ${pages.length}`,
+      fromPage: pageIndex + 1,
+      toPage: nextIndex + 1,
+    });
   };
 
   const visiblePages = [-1, 0, 1].map((offset) => {
@@ -200,7 +227,7 @@ export default function InteractiveBook() {
                       x: `${(offset - direction) * 92}%`,
                     }}
                     transition={{ duration: 0.62, ease: [0.19, 1, 0.22, 1] }}
-                    onClick={() => offset !== 0 && goToPage(index)}
+                    onClick={() => offset !== 0 && goToPage(index, 'carousel_page')}
                   >
                     <div className="page-butterfly page-butterfly-a" />
                     <PageContent page={page} />
@@ -211,14 +238,14 @@ export default function InteractiveBook() {
             </div>
 
             <nav className="book-nav carousel-nav" aria-label="Book pages">
-              <button type="button" onClick={() => goToPage(pageIndex - 1)} disabled={!canGoBack}>
+              <button type="button" onClick={() => goToPage(pageIndex - 1, 'previous_button')} disabled={!canGoBack}>
                 <FiChevronLeft />
                 <span>Алдыңғы бет</span>
               </button>
               <strong>
                 {String(pageIndex + 1).padStart(2, '0')} / {String(pages.length).padStart(2, '0')}
               </strong>
-              <button type="button" onClick={() => goToPage(pageIndex + 1)} disabled={!canGoNext}>
+              <button type="button" onClick={() => goToPage(pageIndex + 1, 'next_button')} disabled={!canGoNext}>
                 <span>Келесі бет</span>
                 <FiChevronRight />
               </button>
