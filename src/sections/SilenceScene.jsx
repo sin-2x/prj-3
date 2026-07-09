@@ -33,9 +33,7 @@ export default function SilenceScene() {
         </div>
         <div>
           <SectionHeading {...chapter} />
-          <p data-reveal-line>
-            Кейде ең ауыр жауап — ешқандай жауаптың келмеуі. Экран жарық болады, бірақ ішіңдегі қала қараңғыланады.
-          </p>
+      
         </div>
       </div>
     </SceneFrame>
